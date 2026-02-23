@@ -1,9 +1,21 @@
-import { mkdir, rename, unlink, stat } from "node:fs/promises";
+import { mkdir, rename, unlink, stat, readFile } from "node:fs/promises";
 import { join, resolve, normalize, sep } from "node:path";
 import { platform, release, arch } from "node:os";
 import checkDiskSpace from "check-disk-space";
 
 const STORAGE_ROOT = process.env.STORAGE_ROOT ?? join(process.cwd(), "storage");
+
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 function resolveSafe(relativePath: string): string {
   const normalized = normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -160,14 +172,30 @@ async function handleRequest(request: Request): Promise<Response> {
   const pathname = url.pathname;
   const method = request.method;
 
-  if (pathname === "/api/disk" && method === "GET") return handleDisk();
-  if (pathname === "/api/os" && method === "GET") return handleOs();
-  if (pathname === "/api/upload" && method === "POST") return handleUpload(request);
-  if (pathname === "/api/rename" && method === "PATCH") return handleRename(request);
-  if (pathname === "/api/download" && method === "GET") return handleDownload(request);
-  if (pathname === "/api/file" && method === "DELETE") return handleDelete(request);
+  if (method === "OPTIONS") {
+    return withCors(new Response(null, { status: 204 }));
+  }
 
-  return errorResponse("Not Found", 404);
+  if ((pathname === "/dev-ui" || pathname === "/dev-ui/") && method === "GET") {
+    try {
+      const htmlPath = join(process.cwd(), "index.html");
+      const html = await readFile(htmlPath, "utf-8");
+      return new Response(html, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    } catch {
+      return errorResponse("Dev UI not found", 404);
+    }
+  }
+
+  if (pathname === "/api/disk" && method === "GET") return withCors(await handleDisk());
+  if (pathname === "/api/os" && method === "GET") return withCors(handleOs());
+  if (pathname === "/api/upload" && method === "POST") return withCors(await handleUpload(request));
+  if (pathname === "/api/rename" && method === "PATCH") return withCors(await handleRename(request));
+  if (pathname === "/api/download" && method === "GET") return withCors(await handleDownload(request));
+  if (pathname === "/api/file" && method === "DELETE") return withCors(await handleDelete(request));
+
+  return withCors(errorResponse("Not Found", 404));
 }
 
 const server = Bun.serve({

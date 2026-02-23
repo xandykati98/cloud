@@ -1,6 +1,9 @@
 # dependencies (bun install)
 node_modules
 
+# this is where the data is stored, we dont want git to track it
+storage
+
 # output
 out
 dist

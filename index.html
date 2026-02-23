@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloud Storage API</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a30;
+      --text: #e4e4e7;
+      --muted: #a1a1aa;
+      --accent: #7c3aed;
+      --accent-hover: #8b5cf6;
+      --error: #f87171;
+      --success: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1.5rem;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0 0 1.5rem 0;
+      color: var(--text);
+    }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      max-width: 42rem;
+    }
+    section h2 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin: 0 0 0.75rem 0;
+    }
+    label { display: block; font-size: 0.8125rem; margin-bottom: 0.25rem; color: var(--muted); }
+    input[type="text"],
+    input[type="file"] {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    input::file-selector-button {
+      background: var(--border);
+      color: var(--text);
+      border: 0;
+      padding: 0.35rem 0.6rem;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.75rem;
+      margin-right: 0.5rem;
+    }
+    button, .btn {
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      background: var(--accent);
+      color: #fff;
+      border: 0;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    button:hover, .btn:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--border); }
+    .btn-secondary:hover { background: #3a3a42; }
+    pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-size: 0.8125rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin: 0.5rem 0 0 0;
+    }
+    .message { font-size: 0.8125rem; margin-top: 0.5rem; }
+    .message.error { color: var(--error); }
+    .message.success { color: var(--success); }
+    form.htmx-request button { opacity: 0.7; pointer-events: none; }
+    .flex { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; }
+    .flex input { margin-bottom: 0; flex: 1; min-width: 12rem; }
+  </style>
+</head>
+<body>
+  <script>
+    (function () {
+      var apiBase = "";
+      if (window.location.protocol === "file:" || window.location.port !== "4444") {
+        apiBase = "http://localhost:4444";
+      }
+      window.API_BASE = apiBase;
+    })();
+  </script>
+  <h1>Cloud Storage API</h1>
+
+  <section>
+    <h2>Disk</h2>
+    <button type="button" id="disk-btn">
+      Load disk info
+    </button>
+    <span id="disk-indicator" style="margin-left: 0.5rem; display: none;">Loading…</span>
+    <div id="disk-result"></div>
+  </section>
+
+  <section>
+    <h2>OS</h2>
+    <button type="button" id="os-btn">
+      Load OS info
+    </button>
+    <span id="os-indicator" style="margin-left: 0.5rem; display: none;">Loading…</span>
+    <div id="os-result"></div>
+  </section>
+
+  <section>
+    <h2>Upload</h2>
+    <form id="upload-form">
+      <label for="upload-path">Path (relative to storage root)</label>
+      <input id="upload-path" name="path" type="text" required placeholder="e.g. folder/file.txt" />
+      <label for="upload-file">File</label>
+      <input id="upload-file" name="file" type="file" required />
+      <button type="submit">Upload</button>
+      <span id="upload-indicator" style="margin-left: 0.5rem; display: none;">Uploading…</span>
+    </form>
+    <div id="upload-result"></div>
+  </section>
+
+  <section>
+    <h2>Rename</h2>
+    <form id="rename-form" class="flex">
+      <div>
+        <label for="rename-from">From</label>
+        <input id="rename-from" name="from" type="text" required placeholder="current/path.txt" />
+      </div>
+      <div>
+        <label for="rename-to">To</label>
+        <input id="rename-to" name="to" type="text" required placeholder="new/path.txt" />
+      </div>
+      <button type="submit">Rename</button>
+    </form>
+    <span id="rename-indicator" class="htmx-indicator" style="display: none;">Rename…</span>
+    <div id="rename-result"></div>
+  </section>
+
+  <section>
+    <h2>Download</h2>
+    <form id="download-form" action="/api/download" method="get" target="_blank" class="flex">
+      <div style="flex: 1; min-width: 12rem;">
+        <label for="download-path">Path</label>
+        <input id="download-path" name="path" type="text" required placeholder="path/to/file.txt" />
+      </div>
+      <button type="submit" class="btn">Download</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Delete file</h2>
+    <form id="delete-form" class="flex">
+      <div style="flex: 1; min-width: 12rem;">
+        <label for="delete-path">Path</label>
+        <input id="delete-path" name="path" type="text" required placeholder="path/to/file.txt" />
+      </div>
+      <button type="submit" class="btn-secondary">Delete</button>
+    </form>
+    <div id="delete-result"></div>
+  </section>
+
+  <script>
+    (function () {
+      const API_BASE = window.API_BASE || "";
+
+      function escapeHtml(s) {
+        const div = document.createElement("div");
+        div.textContent = s;
+        return div.innerHTML;
+      }
+
+      function showResult(resultEl, indicator, data, isError) {
+        if (isError) {
+          resultEl.innerHTML = "<span class=\"message error\">" + escapeHtml(data) + "</span>";
+        } else {
+          resultEl.innerHTML = "<pre>" + escapeHtml(JSON.stringify(data, null, 2)) + "</pre>";
+        }
+      }
+
+      document.getElementById("disk-btn").addEventListener("click", function () {
+        const resultEl = document.getElementById("disk-result");
+        const indicator = document.getElementById("disk-indicator");
+        indicator.style.display = "inline";
+        resultEl.innerHTML = "";
+        fetch(API_BASE + "/api/disk")
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.error) {
+              showResult(resultEl, indicator, data.error, true);
+            } else {
+              showResult(resultEl, indicator, data, false);
+            }
+          })
+          .catch(function (err) {
+            resultEl.innerHTML = "<span class=\"message error\">" + escapeHtml(err.message) + "</span>";
+          })
+          .finally(function () { indicator.style.display = "none"; });
+      });
+
+      document.getElementById("os-btn").addEventListener("click", function () {
+        const resultEl = document.getElementById("os-result");
+        const indicator = document.getElementById("os-indicator");
+        indicator.style.display = "inline";
+        resultEl.innerHTML = "";
+        fetch(API_BASE + "/api/os")
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data.error) {
+              showResult(resultEl, indicator, data.error, true);
+            } else {
+              showResult(resultEl, indicator, data, false);
+            }
+          })
+          .catch(function (err) {
+            resultEl.innerHTML = "<span class=\"message error\">" + escapeHtml(err.message) + "</span>";
+          })
+          .finally(function () { indicator.style.display = "none"; });
+      });
+
+      document.getElementById("upload-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const pathInput = document.getElementById("upload-path");
+        const fileInput = document.getElementById("upload-file");
+        const resultEl = document.getElementById("upload-result");
+        const indicator = document.getElementById("upload-indicator");
+        const path = pathInput.value.trim();
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          resultEl.innerHTML = "<span class=\"message error\">Select a file</span>";
+          return;
+        }
+        indicator.style.display = "inline";
+        resultEl.innerHTML = "";
+        const formData = new FormData();
+        formData.append("path", path);
+        formData.append("file", file);
+        fetch(API_BASE + "/api/upload", {
+          method: "POST",
+          body: formData,
+        })
+          .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+          .then(function (res) {
+            if (res.data.error) {
+              showResult(resultEl, indicator, res.data.error, true);
+            } else {
+              showResult(resultEl, indicator, res.data, false);
+            }
+          })
+          .catch(function (err) {
+            resultEl.innerHTML = "<span class=\"message error\">" + escapeHtml(err.message) + "</span>";
+          })
+          .finally(function () { indicator.style.display = "none"; });
+      });
+
+      if (window.API_BASE) {
+        document.getElementById("download-form").setAttribute("action", window.API_BASE + "/api/download");
+      }
+
+      document.getElementById("rename-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const from = document.getElementById("rename-from").value.trim();
+        const to = document.getElementById("rename-to").value.trim();
+        const resultEl = document.getElementById("rename-result");
+        const indicator = document.getElementById("rename-indicator");
+        indicator.style.display = "inline";
+        resultEl.innerHTML = "";
+        fetch(API_BASE + "/api/rename", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ from: from, to: to }),
+        })
+          .then(function (r) {
+            return r.json().then(function (data) {
+              if (!r.ok) throw new Error(data.error || "Rename failed");
+              return data;
+            });
+          })
+          .then(function (data) {
+            resultEl.innerHTML = "<span class=\"message success\">Renamed to " + escapeHtml(data.to) + "</span>";
+          })
+          .catch(function (err) {
+            resultEl.innerHTML = "<span class=\"message error\">" + escapeHtml(err.message) + "</span>";
+          })
+          .finally(function () {
+            indicator.style.display = "none";
+          });
+      });
+
+      document.getElementById("delete-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const path = document.getElementById("delete-path").value.trim();
+        const resultEl = document.getElementById("delete-result");
+        fetch(API_BASE + "/api/file?path=" + encodeURIComponent(path), { method: "DELETE" })
+          .then(function (r) {
+            return r.json().then(function (data) {
+              if (!r.ok) throw new Error(data.error || "Delete failed");
+              return data;
+            });
+          })
+          .then(function (data) {
+            resultEl.innerHTML = "<span class=\"message success\">Deleted: " + escapeHtml(data.deleted) + "</span>";
+          })
+          .catch(function (err) {
+            resultEl.innerHTML = "<span class=\"message error\">" + escapeHtml(err.message) + "</span>";
+          });
+      });
+    })();
+  </script>
+</body>
+</html>
