@@ -1,4 +1,4 @@
-import { mkdir, rename, unlink, stat, readFile } from "node:fs/promises";
+import { mkdir, rename, unlink, stat, readFile, readdir } from "node:fs/promises";
 import { join, resolve, normalize, sep } from "node:path";
 import { platform, release, arch } from "node:os";
 import checkDiskSpace from "check-disk-space";
@@ -167,6 +167,76 @@ async function handleDelete(request: Request): Promise<Response> {
   }
 }
 
+interface TreeEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  size?: number;
+  mtime?: string;
+  children?: TreeEntry[];
+}
+
+async function buildTree(relativePath: string): Promise<TreeEntry> {
+  const fullPath = resolveSafe(relativePath);
+  let st: Awaited<ReturnType<typeof stat>>;
+  try {
+    st = await stat(fullPath);
+  } catch (err) {
+    const code = err && typeof err === "object" && "code" in err ? (err as { code: string }).code : undefined;
+    if (relativePath === "" && code === "ENOENT") {
+      await mkdir(STORAGE_ROOT, { recursive: true });
+      return {
+        name: ".",
+        path: ".",
+        dir: true,
+        mtime: new Date().toISOString(),
+        children: [],
+      };
+    }
+    throw err;
+  }
+  const name = relativePath === "" ? "." : relativePath.split(/[/\\]/).pop() ?? ".";
+  const entry: TreeEntry = {
+    name,
+    path: relativePath || ".",
+    dir: st.isDirectory(),
+    mtime: st.mtime.toISOString(),
+  };
+  if (st.isFile()) {
+    entry.size = st.size;
+  }
+  if (st.isDirectory()) {
+    const names = await readdir(fullPath);
+    names.sort(function (a, b) {
+      return a.toLowerCase().localeCompare(b.toLowerCase());
+    });
+    entry.children = [];
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      if (name === undefined) continue;
+      const childPath = relativePath === "" ? name : relativePath + sep + name;
+      const child = await buildTree(childPath);
+      entry.children.push(child);
+    }
+  }
+  return entry;
+}
+
+async function handleTree(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const pathParam = url.searchParams.get("path") ?? "";
+  try {
+    const tree = await buildTree(pathParam);
+    return jsonResponse(tree);
+  } catch (err) {
+    if (err instanceof Error && err.message === "Path traversal not allowed") {
+      return errorResponse("Path traversal not allowed", 400);
+    }
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return errorResponse(`Tree failed: ${message}`, 500);
+  }
+}
+
 async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const pathname = url.pathname;
@@ -194,6 +264,7 @@ async function handleRequest(request: Request): Promise<Response> {
   if (pathname === "/api/rename" && method === "PATCH") return withCors(await handleRename(request));
   if (pathname === "/api/download" && method === "GET") return withCors(await handleDownload(request));
   if (pathname === "/api/file" && method === "DELETE") return withCors(await handleDelete(request));
+  if ((pathname === "/api/tree" || pathname === "/api/tree/") && method === "GET") return withCors(await handleTree(request));
 
   return withCors(errorResponse("Not Found", 404));
 }

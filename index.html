@@ -102,6 +102,14 @@
     form.htmx-request button { opacity: 0.7; pointer-events: none; }
     .flex { display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap; }
     .flex input { margin-bottom: 0; flex: 1; min-width: 12rem; }
+    .tree-section { max-width: 56rem; }
+    .tree-view {
+      font-size: 0.8125rem;
+      line-height: 1.4;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .tree-view .tree-meta { color: var(--muted); margin-left: 1rem; }
   </style>
 </head>
 <body>
@@ -187,6 +195,19 @@
     <div id="delete-result"></div>
   </section>
 
+  <section class="tree-section">
+    <h2>Tree</h2>
+    <div class="flex" style="margin-bottom: 0.75rem;">
+      <div style="flex: 1; min-width: 12rem;">
+        <label for="tree-path">Path (optional, root if empty)</label>
+        <input id="tree-path" type="text" placeholder="e.g. folder/sub" />
+      </div>
+      <button type="button" id="tree-btn">Load tree</button>
+    </div>
+    <span id="tree-indicator" style="display: none;">Loading…</span>
+    <pre id="tree-result" class="tree-view"></pre>
+  </section>
+
   <script>
     (function () {
       const API_BASE = window.API_BASE || "";
@@ -204,6 +225,97 @@
           resultEl.innerHTML = "<pre>" + escapeHtml(JSON.stringify(data, null, 2)) + "</pre>";
         }
       }
+
+      function formatSize(bytes) {
+        if (bytes === undefined || bytes === null) return "-";
+        if (bytes === 0) return "0 B";
+        var u = ["B", "KB", "MB", "GB"];
+        var i = 0;
+        var n = bytes;
+        while (n >= 1024 && i < u.length - 1) {
+          n /= 1024;
+          i += 1;
+        }
+        return (i === 0 ? n : n.toFixed(1)) + " " + u[i];
+      }
+
+      function formatMtime(iso) {
+        if (!iso) return "-";
+        var d = new Date(iso);
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0") + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+      }
+
+      function renderTreeLines(entry, prefix, isLast, lines, nameWidth, sizeWidth) {
+        var sizeStr = entry.dir ? "-" : formatSize(entry.size);
+        var mtimeStr = formatMtime(entry.mtime);
+        var left = prefix + (isLast ? "└── " : "├── ") + entry.name;
+        var right = sizeStr.padStart(sizeWidth) + "  " + mtimeStr;
+        lines.push({ left: left, right: right, totalWidth: nameWidth + sizeWidth + 2 + 10 });
+        var childPrefix = prefix + (isLast ? "    " : "│   ");
+        if (entry.children && entry.children.length) {
+          for (var i = 0; i < entry.children.length; i++) {
+            renderTreeLines(entry.children[i], childPrefix, i === entry.children.length - 1, lines, nameWidth, sizeWidth);
+          }
+        }
+      }
+
+      function treeToAscii(tree) {
+        var lines = [];
+        var nameWidth = 32;
+        var sizeWidth = 10;
+        var left = tree.name;
+        var sizeStr = tree.dir ? "-" : formatSize(tree.size);
+        var mtimeStr = formatMtime(tree.mtime);
+        var right = sizeStr.padStart(sizeWidth) + "  " + mtimeStr;
+        lines.push({ left: left, right: right, totalWidth: nameWidth + sizeWidth + 2 + 10 });
+        if (tree.children && tree.children.length) {
+          for (var i = 0; i < tree.children.length; i++) {
+            renderTreeLines(tree.children[i], "", i === tree.children.length - 1, lines, nameWidth, sizeWidth);
+          }
+        }
+        var maxLeft = 0;
+        for (var j = 0; j < lines.length; j++) {
+          if (lines[j].left.length > maxLeft) maxLeft = lines[j].left.length;
+        }
+        return lines.map(function (l) {
+          return l.left.padEnd(maxLeft) + "  " + l.right;
+        }).join("\n");
+      }
+
+      document.getElementById("tree-btn").addEventListener("click", function () {
+        var pathInput = document.getElementById("tree-path");
+        var resultEl = document.getElementById("tree-result");
+        var indicator = document.getElementById("tree-indicator");
+        var path = pathInput.value.trim();
+        indicator.style.display = "inline";
+        resultEl.textContent = "";
+        var url = API_BASE + "/api/tree";
+        if (path) url += "?path=" + encodeURIComponent(path);
+        fetch(url)
+          .then(function (r) {
+            return r.text().then(function (text) {
+              try {
+                return JSON.parse(text);
+              } catch (_) {
+                return { error: "Response is not JSON: " + text.slice(0, 200) };
+              }
+            });
+          })
+          .then(function (data) {
+            if (data.error) {
+              resultEl.textContent = data.error;
+              resultEl.classList.add("message", "error");
+            } else {
+              resultEl.classList.remove("message", "error");
+              resultEl.textContent = treeToAscii(data);
+            }
+          })
+          .catch(function (err) {
+            resultEl.textContent = err.message;
+            resultEl.classList.add("message", "error");
+          })
+          .finally(function () { indicator.style.display = "none"; });
+      });
 
       document.getElementById("disk-btn").addEventListener("click", function () {
         const resultEl = document.getElementById("disk-result");
